@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Godot Balance Lab View</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0f1115; --card: #171a21; --text: #e9eef7; --muted: #9fb0c9; --grid: #293043; --accent: #78a6ff; --accent-2: #8df0c7; --warn: #ffb86c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { display: grid; gap: 16px; }
+    .card { background: var(--card); border: 1px solid #202636; border-radius: 16px; padding: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .stat { background: #11151e; border-radius: 12px; padding: 10px; border: 1px solid #202636; }
+    .stat .k { font-size: 12px; color: var(--muted); }
+    .stat .v { font-size: 18px; font-weight: 700; margin-top: 4px; }
+    canvas { width: 100%; height: 220px; display: block; background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #232938; }
+    th { color: var(--muted); font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+  function getPayload() {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('payload');
+    try { return raw ? JSON.parse(decodeURIComponent(raw)) : null; } catch { return null; }
+  }
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (typeof text === 'string') node.textContent = text;
+    return node;
+  }
+  function drawLineChart(canvas, values, labels, color) {
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth * dpr;
+    const height = canvas.clientHeight * dpr;
+    canvas.width = width; canvas.height = height; ctx.scale(dpr, dpr);
+    const w = canvas.clientWidth, h = canvas.clientHeight, pad = 28;
+    const min = Math.min(...values), max = Math.max(...values), span = Math.max(1, max - min);
+    ctx.strokeStyle = '#293043'; ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) { const y = pad + ((h - pad * 2) / 3) * i; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke(); }
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    values.forEach((value, i) => { const x = pad + ((w - pad * 2) / Math.max(1, values.length - 1)) * i; const y = h - pad - ((value - min) / span) * (h - pad * 2); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+    ctx.stroke(); ctx.fillStyle = color;
+    values.forEach((value, i) => { const x = pad + ((w - pad * 2) / Math.max(1, values.length - 1)) * i; const y = h - pad - ((value - min) / span) * (h - pad * 2); ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill(); });
+    ctx.fillStyle = '#9fb0c9'; ctx.font = '12px system-ui'; ctx.fillText(String(max), 4, pad + 4); ctx.fillText(String(min), 4, h - pad + 4);
+    labels.forEach((label, i) => { const x = pad + ((w - pad * 2) / Math.max(1, labels.length - 1)) * i; ctx.fillText(String(label), x - 6, h - 6); });
+  }
+  function renderSingle(app, data) {
+    const base = data.baseline; const card = el('div', 'card');
+    card.append(el('h1', '', 'Godot Balance Lab')); card.append(el('h2', '', 'Single build snapshot'));
+    const grid = el('div', 'grid'); [['DPS', base.dps], ['TTK', `${base.ttk_seconds}s`], ['Enemy HP', base.enemy_hp], ['Crit', `${base.crit_chance}%`]].forEach(([k, v]) => { const s = el('div', 'stat'); s.append(el('div', 'k', k)); s.append(el('div', 'v', String(v))); grid.append(s); });
+    card.append(grid); app.append(card);
+    if (Array.isArray(data.upgrades) && data.upgrades.length) {
+      const chartCard = el('div', 'card'); chartCard.append(el('h1', '', 'Upgrade comparison')); chartCard.append(el('h2', '', 'TTK trend across options')); const canvas = document.createElement('canvas'); chartCard.append(canvas); app.append(chartCard); drawLineChart(canvas, [base.ttk_seconds, ...data.upgrades.map(x => x.ttk_seconds)], ['base', ...data.upgrades.map(x => x.label)], '#78a6ff');
+    }
+  }
+  function renderCompare(app, data) {
+    const card = el('div', 'card'); card.append(el('h1', '', 'Build ranking')); card.append(el('h2', '', 'Higher DPS is not always better, but it is a strong first filter')); const table = document.createElement('table'); table.innerHTML = '<thead><tr><th>Build</th><th>DPS</th><th>TTK</th><th>Crit</th></tr></thead>'; const tbody = document.createElement('tbody'); data.ranking.forEach((row) => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${row.label}</td><td>${row.dps}</td><td>${row.ttk_seconds}s</td><td>${row.crit_chance}%</td>`; tbody.append(tr); }); table.append(tbody); card.append(table); app.append(card);
+      const chartCard = el('div', 'card'); chartCard.append(el('h1', '', 'DPS spread')); const canvas = document.createElement('canvas'); chartCard.append(canvas); app.append(chartCard); drawLineChart(canvas, data.ranking.map(x => x.dps), data.ranking.map(x => x.label), '#8df0c7');
+  }
+  function renderCurve(app, data) {
+    const card = el('div', 'card'); card.append(el('h1', '', 'Enemy HP curve')); card.append(el('h2', '', 'Watch how TTK stretches over waves')); const canvas = document.createElement('canvas'); card.append(canvas); app.append(card); drawLineChart(canvas, data.points.map(x => x.ttk_seconds), data.points.map(x => x.wave), '#ffb86c');
+  }
+  const app = document.getElementById('app'); const payload = getPayload();
+  if (!payload) app.append(el('div', 'card', 'No payload found.'));
+  else if (payload.mode === 'single') renderSingle(app, payload);
+  else if (payload.mode === 'compare') renderCompare(app, payload);
+  else if (payload.mode === 'curve') renderCurve(app, payload);
+  else app.append(el('div', 'card', 'Unsupported payload mode.'));
+</script>
+</body>
+</html>
