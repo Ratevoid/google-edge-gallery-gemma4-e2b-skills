@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>network-search-safe status</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --card: rgba(20, 28, 48, 0.95);
+      --text: #f3f7ff;
+      --muted: #9eb2d1;
+      --ok: #65f0b5;
+      --line: rgba(255,255,255,0.1);
+      --chip: rgba(120,166,255,0.16);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #0b1020 0%, #111a31 100%);
+      color: var(--text);
+      padding: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    }
+    .chip {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: var(--chip);
+      color: #c9dbff;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    .grid { display: grid; grid-template-columns: 86px 1fr; gap: 8px 12px; margin-top: 14px; font-size: 14px; }
+    .k { color: var(--muted); }
+    .v { word-break: break-word; }
+    .note {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      color: #d8e4fb;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+    .ok { color: var(--ok); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="chip">network-search-safe</div>
+    <h1>Public web lookup complete</h1>
+    <div class="grid">
+      <div class="k">Mode</div><div class="v" id="mode"></div>
+      <div class="k">Target</div><div class="v" id="target"></div>
+      <div class="k">Provider</div><div class="v" id="provider"></div>
+    </div>
+    <div class="note">
+      <span class="ok">What this means:</span> the skill used a lightweight public source first, stayed on <code>run_js</code>, and avoided native search intents.
+      This gives you a more reliable first-pass network search inside AI Edge Gallery.
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const payload = JSON.parse(decodeURIComponent(params.get('payload') || '{}'));
+    document.getElementById('mode').textContent = payload.mode || '-';
+    document.getElementById('target').textContent = payload.target || '-';
+    document.getElementById('provider').textContent = payload.provider || '-';
+  </script>
+</body>
+</html>
