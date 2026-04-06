@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>web-reader-js-fast</title>
+</head>
+<body>
+<script>
+const PROVIDER_TIMEOUT_MS = 8000;
+const OVERALL_TIMEOUT_MS = 18000;
+
+function normalizeUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) throw new Error('Missing url');
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return 'https://' + raw;
+}
+
+function trimContent(text, maxChars = 12000) {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  return clean.length <= maxChars ? clean : clean.slice(0, maxChars) + "\n\n[truncated]";
+}
+
+function inferLanguage(query, lang) {
+  if (lang) return lang;
+  return /[一-鿿]/.test(query || '') ? 'zh' : 'en';
+}
+
+function getApiKey(input) {
+  return String(input.jina_api_key || input.api_key || '').trim();
+}
+
+function isAiTrendQuery(query) {
+  const q = String(query || '').toLowerCase();
+  return /\bai\b|artificial intelligence|llm|agent|model|gpt|gemini|claude|deepseek|人工智能|大模型|热点|热搜|趋势|最新|新闻/.test(q);
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+  ]);
+}
+
+async function fetchText(url, options = {}) {
+  const { headers = {} } = options;
+  const res = await fetch(url, { method: 'GET', headers });
+  const body = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}${body ? `: ${body.slice(0, 220)}` : ''}`);
+  return body;
+}
+
+async function fetchJson(url, options = {}) {
+  const txt = await fetchText(url, { headers: { 'Accept': 'application/json, text/plain;q=0.9, */*;q=0.5', ...(options.headers || {}) } });
+  return JSON.parse(txt);
+}
+
+function makeWebviewUrl(meta) {
+  const params = new URLSearchParams();
+  Object.entries(meta || {}).forEach(([k, v]) => params.set(k, String(v || '')));
+  return `../assets/webview.html?${params.toString()}`;
+}
+
+async function searchViaWikipedia(query, lang) {
+  const wikiLang = inferLanguage(query, lang);
+  const endpoint = `https://${wikiLang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=1&format=json&origin=*`;
+  const data = await withTimeout(fetchJson(endpoint), PROVIDER_TIMEOUT_MS, 'Wikipedia');
+  const items = (((data || {}).query || {}).search || []).slice(0, 5);
+  if (!items.length) throw new Error('Wikipedia returned no results');
+  return {
+    provider: 'wikipedia',
+    title: `Wikipedia search for: ${query}`,
+    content: items.map((item, i) => {
+      const url = `https://${wikiLang}.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`;
+      const snippet = String(item.snippet || '').replace(/<[^>]+>/g, '');
+      return `## ${i + 1}. ${item.title}\nURL: ${url}\n${snippet}`;
+    }).join('\n\n')
+  };
+}
+
+async function searchViaHackerNews(query) {
+  const endpoint = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story`;
+  const data = await withTimeout(fetchJson(endpoint), PROVIDER_TIMEOUT_MS, 'Hacker News');
+  const hits = (data && data.hits ? data.hits : []).slice(0, 5);
+  if (!hits.length) throw new Error('Hacker News returned no results');
+  return {
+    provider: 'hackernews',
+    title: `Hacker News search for: ${query}`,
+    content: hits.map((item, i) => {
+      const title = item.title || item.story_title || `Result ${i + 1}`;
+      const url = item.url || item.story_url || `https://news.ycombinator.com/item?id=${item.objectID}`;
+      return `## ${i + 1}. ${title}\nURL: ${url}\nPoints: ${item.points || 0} | Comments: ${item.num_comments || 0} | Author: ${item.author || 'unknown'} | Date: ${item.created_at || 'unknown'}`;
+    }).join('\n\n')
+  };
+}
+
+async function searchViaJina(query, apiKey) {
+  const headers = { 'Accept': 'application/json, text/plain;q=0.9, */*;q=0.5' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const endpoint = `https://s.jina.ai/${encodeURIComponent(query)}`;
+  const text = await withTimeout(fetchText(endpoint, { headers }), PROVIDER_TIMEOUT_MS, 'Jina');
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch (_) {}
+  if (Array.isArray(parsed)) {
+    return {
+      provider: 'jina',
+      title: `Web search for: ${query}`,
+      content: parsed.slice(0, 5).map((item, i) => `## ${i + 1}. ${item.title || item.url || `Result ${i+1}`}\n${item.url ? `URL: ${item.url}\n` : ''}${trimContent(item.content || '', 800)}`).join('\n\n')
+    };
+  }
+  return { provider: 'jina', title: `Web search for: ${query}`, content: trimContent(text, 8000) };
+}
+
+function formatResult(result, stamp, notes = []) {
+  return `${result.title}\nProvider: ${result.provider}\nFetched at ${stamp}.${notes.length ? `\nNotes: ${notes.join(' | ')}` : ''}\n\n${trimContent(result.content)}`;
+}
+
+async function runSearch(input) {
+  const query = String(input.query || input.prompt || input.text || '').trim();
+  if (!query) throw new Error('Missing query for search mode');
+  const provider = String(input.provider || 'auto').trim().toLowerCase();
+  const lang = inferLanguage(query, input.lang);
+  const apiKey = getApiKey(input);
+  const errors = [];
+
+  let providers;
+  if (provider === 'hn') providers = ['hackernews'];
+  else if (provider === 'wikipedia' || provider === 'wiki') providers = ['wikipedia'];
+  else if (provider === 'jina') providers = ['jina'];
+  else providers = isAiTrendQuery(query) ? ['hackernews', 'wikipedia', 'jina'] : ['wikipedia', 'hackernews', 'jina'];
+
+  for (const p of providers) {
+    try {
+      if (p === 'hackernews') return await searchViaHackerNews(query);
+      if (p === 'wikipedia') return await searchViaWikipedia(query, lang);
+      if (p === 'jina') return await searchViaJina(query, apiKey);
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      errors.push(`${p}: ${msg}`);
+    }
+  }
+  throw new Error(`All providers failed. ${errors.join(' || ')}`);
+}
+
+async function runRead(input) {
+  const url = normalizeUrl(input.url || input.target_url || input.link);
+  const apiKey = getApiKey(input);
+  const headers = { 'Accept': 'text/plain, text/markdown, text/html;q=0.8, */*;q=0.5' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const content = await withTimeout(fetchText(`https://r.jina.ai/${url}`, { headers }), 10000, 'Jina Reader');
+  const stamp = new Date().toISOString();
+  return {
+    result: `Read public URL: ${url}\nProvider: jina-reader\nFetched at ${stamp}.\n\n${trimContent(content)}`,
+    webview: { url: makeWebviewUrl({ mode: 'read', label: url, source: 'Jina Reader', time: stamp }), aspectRatio: 1.55 }
+  };
+}
+
+window.ai_edge_gallery_get_result = async (data) => {
+  try {
+    const input = JSON.parse(data || '{}');
+    const mode = String(input.mode || ((input.url || input.target_url || input.link) ? 'read' : 'search')).trim().toLowerCase();
+    const out = await withTimeout((async () => {
+      if (mode === 'search') {
+        const stamp = new Date().toISOString();
+        const result = await runSearch(input);
+        return {
+          result: formatResult(result, stamp),
+          webview: { url: makeWebviewUrl({ mode: 'search', label: String(input.query || '').trim(), source: result.provider, time: stamp }), aspectRatio: 1.55 }
+        };
+      }
+      if (mode === 'read') return await runRead(input);
+      throw new Error(`Unsupported mode: ${mode}`);
+    })(), OVERALL_TIMEOUT_MS, 'Skill');
+    return JSON.stringify(out);
+  } catch (e) {
+    return JSON.stringify({ error: `web-reader-js-fast failed: ${String(e && e.message ? e.message : e)}` });
+  }
+};
+</script>
+</body>
+</html>
