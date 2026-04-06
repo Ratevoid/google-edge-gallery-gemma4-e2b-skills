@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>web-reader-js-fast status</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #111827;
+      --card: #1f2937;
+      --muted: #9ca3af;
+      --text: #f9fafb;
+      --ok: #34d399;
+      --border: rgba(255,255,255,.12);
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #0b1020 0%, #121a2f 100%);
+      color: var(--text);
+    }
+    .wrap { padding: 18px; }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(31, 41, 55, 0.92);
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+      padding: 18px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(96,165,250,.14);
+      color: #bfdbfe;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    .grid { display: grid; grid-template-columns: 88px 1fr; gap: 8px 12px; margin-top: 14px; font-size: 14px; }
+    .k { color: var(--muted); }
+    .v { word-break: break-word; }
+    .note { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); color: #d1d5db; font-size: 13px; line-height: 1.5; }
+    strong.ok { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="pill">web-reader-js-fast</div>
+      <h1>Public web lookup ready</h1>
+      <div class="grid">
+        <div class="k">Mode</div><div class="v" id="mode"></div>
+        <div class="k">Target</div><div class="v" id="label"></div>
+        <div class="k">Source</div><div class="v" id="source"></div>
+        <div class="k">Fetched</div><div class="v" id="time"></div>
+      </div>
+      <div class="note">
+        <strong class="ok">What this means:</strong> the skill fetched public-web content from a public source.
+        It is good for quick research, docs, articles, and public PDFs. It is not a bypass for logins, paywalls, or private data.
+      </div>
+    </div>
+  </div>
+  <script>
+    const p = new URLSearchParams(location.search);
+    document.getElementById('mode').textContent = p.get('mode') || '-';
+    document.getElementById('label').textContent = p.get('label') || '-';
+    document.getElementById('source').textContent = p.get('source') || '-';
+    document.getElementById('time').textContent = p.get('time') || '-';
+  </script>
+</body>
+</html>
