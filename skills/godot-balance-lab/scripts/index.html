@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Godot Balance Lab</title>
+</head>
+<body>
+<script>
+(function () {
+  function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+  function round(value, digits = 2) { const factor = Math.pow(10, digits); return Math.round(value * factor) / factor; }
+  function parseNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+
+  function normalizeWeapon(raw = {}) {
+    return {
+      damage: Math.max(0, parseNumber(raw.damage, 0)),
+      attacks_per_second: Math.max(0.01, parseNumber(raw.attacks_per_second, 1)),
+      crit_chance: clamp(parseNumber(raw.crit_chance, 0), 0, 1),
+      crit_multiplier: Math.max(1, parseNumber(raw.crit_multiplier, 1.5)),
+      projectiles: Math.max(1, parseNumber(raw.projectiles, 1)),
+      hit_chance: clamp(parseNumber(raw.hit_chance, 1), 0, 1),
+      enemy_hp: Math.max(1, parseNumber(raw.enemy_hp, 100)),
+      label: raw.label || 'Build'
+    };
+  }
+
+  function computeStats(weapon) {
+    const expectedDamagePerHit = weapon.damage * (1 + weapon.crit_chance * (weapon.crit_multiplier - 1));
+    const effectiveHitsPerSecond = weapon.attacks_per_second * weapon.projectiles * weapon.hit_chance;
+    const dps = expectedDamagePerHit * effectiveHitsPerSecond;
+    const ttk = weapon.enemy_hp / Math.max(0.0001, dps);
+    return {
+      label: weapon.label,
+      enemy_hp: round(weapon.enemy_hp),
+      damage: round(weapon.damage),
+      attacks_per_second: round(weapon.attacks_per_second),
+      crit_chance: round(weapon.crit_chance * 100),
+      crit_multiplier: round(weapon.crit_multiplier),
+      projectiles: round(weapon.projectiles),
+      hit_chance: round(weapon.hit_chance * 100),
+      expected_damage_per_hit: round(expectedDamagePerHit),
+      effective_hits_per_second: round(effectiveHitsPerSecond),
+      dps: round(dps),
+      ttk_seconds: round(ttk)
+    };
+  }
+
+  function applyUpgrade(base, upgrade = {}) {
+    return normalizeWeapon({
+      ...base,
+      label: upgrade.name || base.label,
+      damage: base.damage * parseNumber(upgrade.damage_mult, 1),
+      attacks_per_second: base.attacks_per_second * parseNumber(upgrade.speed_mult, 1),
+      projectiles: base.projectiles + parseNumber(upgrade.projectile_bonus, 0),
+      crit_chance: clamp(base.crit_chance + parseNumber(upgrade.crit_bonus, 0), 0, 1),
+      enemy_hp: base.enemy_hp
+    });
+  }
+
+  function buildWebviewURL(payload) {
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    return `../assets/webview.html?payload=${encoded}`;
+  }
+
+  function analyzeSingle(input) {
+    const base = normalizeWeapon(input);
+    base.label = input.label || 'Main weapon';
+    const baseStats = computeStats(base);
+    const upgrades = Array.isArray(input.upgrades) ? input.upgrades.map((u) => computeStats(applyUpgrade(base, u))) : [];
+
+    const recommendation = [];
+    if (baseStats.ttk_seconds > 8) recommendation.push('Early kill speed looks slow. Consider a damage or fire-rate bump.');
+    if (baseStats.ttk_seconds < 1) recommendation.push('Kill speed is extremely fast. Watch for early snowball and low decision pressure.');
+    if (!recommendation.length) recommendation.push('Baseline looks playable. Tune based on wave density and player safety while attacking.');
+
+    return { mode: 'single', summary: { baseline: baseStats, upgrades, notes: recommendation }, webview: { url: buildWebviewURL({ mode: 'single', baseline: baseStats, upgrades }), aspectRatio: 1.3 } };
+  }
+
+  function analyzeCompare(input) {
+    const builds = Array.isArray(input.builds) ? input.builds : [];
+    if (!builds.length) throw new Error('compare mode requires a non-empty builds array.');
+    const normalized = builds.map((b, i) => normalizeWeapon({ ...b, label: b.label || `Build ${i + 1}` }));
+    const results = normalized.map(computeStats).sort((a, b) => b.dps - a.dps);
+    const best = results[0];
+    const notes = [];
+    if (results.length >= 2) {
+      const gap = round(best.dps / Math.max(0.0001, results[1].dps));
+      if (gap > 1.35) notes.push(`${best.label} is much stronger than the next option and may compress build diversity.`);
+      else notes.push('Top options are fairly close, which is good for meaningful player choice.');
+    }
+    return { mode: 'compare', summary: { ranking: results, notes }, webview: { url: buildWebviewURL({ mode: 'compare', ranking: results }), aspectRatio: 1.3 } };
+  }
+
+  function analyzeCurve(input) {
+    const curve = input.curve || {};
+    const weapon = normalizeWeapon({ ...(curve.weapon || {}), enemy_hp: parseNumber(curve.start_enemy_hp, 100), label: input.label || 'Curve build' });
+    const waves = Math.max(1, parseNumber(curve.waves, 10));
+    const growth = Math.max(1, parseNumber(curve.hp_growth_per_wave, 1.12));
+    const points = [];
+    for (let wave = 1; wave <= waves; wave++) {
+      const hp = weapon.enemy_hp * Math.pow(growth, wave - 1);
+      const stats = computeStats({ ...weapon, enemy_hp: hp });
+      points.push({ wave, enemy_hp: stats.enemy_hp, dps: stats.dps, ttk_seconds: stats.ttk_seconds });
+    }
+    const late = points[points.length - 1];
+    const notes = [];
+    if (late.ttk_seconds > 15) notes.push('Late-wave enemies are likely too tanky for a smooth survivor run.');
+    if (late.ttk_seconds < 2) notes.push('Late-wave enemies still melt very fast. You may be under-scaling health.');
+    if (!notes.length) notes.push('The pacing curve looks broadly usable. Test with actual enemy density and player movement pressure.');
+    return { mode: 'curve', summary: { points, notes }, webview: { url: buildWebviewURL({ mode: 'curve', points }), aspectRatio: 1.3 } };
+  }
+
+  window.ai_edge_gallery_get_result = async (data) => {
+    try {
+      const input = JSON.parse(data || '{}');
+      const mode = input.mode || 'single';
+      let payload;
+      if (mode === 'single') payload = analyzeSingle(input);
+      else if (mode === 'compare') payload = analyzeCompare(input);
+      else if (mode === 'curve') payload = analyzeCurve(input);
+      else throw new Error(`Unsupported mode: ${mode}`);
+      return JSON.stringify({ result: JSON.stringify(payload.summary, null, 2), webview: payload.webview });
+    } catch (error) {
+      return JSON.stringify({ error: `Godot Balance Lab failed: ${error.message}` });
+    }
+  };
+})();
+</script>
+</body>
+</html>
